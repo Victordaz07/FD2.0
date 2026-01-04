@@ -1,0 +1,230 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    /**
+     * Check if user is authenticated
+     */
+    function signedIn() {
+      return request.auth != null;
+    }
+    
+    /**
+     * Check if user is the document owner
+     */
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+    
+    /**
+     * Check if user is a member of a specific family
+     */
+    function isMember(familyId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid));
+    }
+    
+    /**
+     * Get user's role in a family
+     */
+    function getMemberRole(familyId) {
+      return get(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)).data.role;
+    }
+    
+    /**
+     * Check if user is a parent role (PARENT or CO_PARENT)
+     */
+    function isParent(familyId) {
+      return isMember(familyId) &&
+        getMemberRole(familyId) in ['PARENT', 'CO_PARENT'];
+    }
+    
+    /**
+     * Check if user is PARENT (only PARENT, not CO_PARENT)
+     */
+    function isParentOnly(familyId) {
+      return isMember(familyId) &&
+        getMemberRole(familyId) == 'PARENT';
+    }
+    
+    // ============================================
+    // USERS COLLECTION
+    // ============================================
+    
+    match /users/{userId} {
+      // Only the user themselves can read their own profile
+      allow read: if isOwner(userId);
+      
+      // Only the user themselves can write their own profile
+      allow write: if isOwner(userId);
+    }
+    
+    // ============================================
+    // FAMILIES COLLECTION
+    // ============================================
+    
+    match /families/{familyId} {
+      // Allow authenticated users to create new families
+      allow create: if signedIn() && 
+        request.resource.data.createdBy == request.auth.uid;
+      
+      // Only family members can read family data
+      allow read: if isMember(familyId);
+      
+      // Only PARENT can update family (including familyPolicy - HIGH-RISK)
+      allow update: if isParentOnly(familyId);
+      
+      // Only PARENT can delete family
+      allow delete: if isParentOnly(familyId);
+      
+      // ============================================
+      // MEMBERS SUBCOLLECTION
+      // ============================================
+      
+      match /members/{memberId} {
+        // Members can read all members in their family
+        allow read: if isMember(familyId);
+        
+        // Allow creating self as member when joining, or PARENT can add members
+        allow create: if signedIn() && 
+          (isOwner(memberId) || isParent(familyId)) &&
+          request.resource.data.createdBy == request.auth.uid;
+        
+        // Members can update their own profile (limited fields), PARENT can update anyone
+        allow update: if isOwner(memberId) || isParent(familyId);
+        
+        // Only PARENT can delete members
+        allow delete: if isParentOnly(familyId);
+      }
+      
+      // ============================================
+      // ATTENTION REQUESTS SUBCOLLECTION
+      // ============================================
+      
+      match /attention_requests/{requestId} {
+        // Members can read requests in their family
+        allow read: if isMember(familyId);
+        
+        // Only PARENT/CO_PARENT can create attention requests
+        allow create: if isParent(familyId) &&
+          request.resource.data.triggeredByUid == request.auth.uid;
+        
+        // Target user can update (acknowledge), PARENT can update/cancel
+        allow update: if isMember(familyId) &&
+          (request.resource.data.targetUid == request.auth.uid || isParent(familyId));
+        
+      // Only PARENT can delete
+      allow delete: if isParentOnly(familyId);
+    }
+    
+    // ============================================
+    // TASKS SUBCOLLECTION
+    // ============================================
+    
+    match /tasks/{taskId} {
+      // All family members can read tasks
+      allow read: if isMember(familyId);
+      
+      // Only PARENT/CO_PARENT can create tasks
+      allow create: if isParent(familyId) &&
+        request.resource.data.familyId == familyId &&
+        request.resource.data.createdBy == request.auth.uid;
+      
+      // Only PARENT/CO_PARENT can update tasks
+      allow update: if isParent(familyId);
+      
+      // Only PARENT/CO_PARENT can delete tasks
+      allow delete: if isParent(familyId);
+    }
+    
+    // ============================================
+    // TASK COMPLETIONS SUBCOLLECTION
+    // ============================================
+    
+    match /task_completions/{completionId} {
+      // All family members can read completions
+      allow read: if isMember(familyId);
+      
+      // Members can create completions for themselves
+      allow create: if isMember(familyId) &&
+        request.resource.data.familyId == familyId &&
+        request.resource.data.memberUid == request.auth.uid &&
+        request.resource.data.createdBy == request.auth.uid;
+      
+      // NO updates from clients (only Functions can update)
+      allow update: if false;
+      
+      // NO deletes from clients
+      allow delete: if false;
+    }
+    
+    // ============================================
+    // ALLOWANCE LEDGER SUBCOLLECTION (IMMUTABLE)
+    // ============================================
+    
+    match /allowance_ledger/{entryId} {
+      // Members can read their own entries, PARENT/CO_PARENT can read all
+      allow read: if isMember(familyId) &&
+        (resource.data.memberUid == request.auth.uid || isParent(familyId));
+      
+      // NO creates from clients (only Functions can create)
+      allow create: if false;
+      
+      // NO updates from clients (ledger is immutable)
+      allow update: if false;
+      
+      // NO deletes from clients (ledger is immutable)
+      allow delete: if false;
+    }
+    
+    // ============================================
+    // EVENTS SUBCOLLECTION
+    // ============================================
+    
+    match /events/{eventId} {
+      // Read based on visibility
+      allow read: if isMember(familyId) &&
+        (resource.data.visibility == 'family' || isParent(familyId));
+      
+      // Create: PARENT/CO_PARENT always allowed, others based on calendarCreateRoles
+      // CHILD always denied
+      allow create: if isMember(familyId) &&
+        request.resource.data.familyId == familyId &&
+        request.resource.data.createdBy == request.auth.uid &&
+        getMemberRole(familyId) != 'CHILD' &&
+        (isParent(familyId) ||
+         (get(/databases/$(database)/documents/families/$(familyId)).data.familyPolicy.calendarCreateRoles != null &&
+          getMemberRole(familyId) in get(/databases/$(database)/documents/families/$(familyId)).data.familyPolicy.calendarCreateRoles));
+      
+      // Update: Creator or PARENT/CO_PARENT (but CHILD never)
+      allow update: if isMember(familyId) &&
+        getMemberRole(familyId) != 'CHILD' &&
+        (resource.data.createdBy == request.auth.uid || isParent(familyId));
+      
+      // Delete: Creator or PARENT/CO_PARENT (but CHILD never)
+      allow delete: if isMember(familyId) &&
+        getMemberRole(familyId) != 'CHILD' &&
+        (resource.data.createdBy == request.auth.uid || isParent(familyId));
+    }
+  }
+  
+  // ============================================
+  // AUDIT LOGS COLLECTION (IMMUTABLE)
+  // ============================================
+  
+  match /audit_logs/{logId} {
+    // Only family members can read audit logs for their family
+    allow read: if signedIn() && 
+      isMember(resource.data.familyId);
+    
+    // Only server/Functions can write audit logs
+    // In production, this should be enforced via Functions only
+    allow write: if false; // Deny all writes from client
+  }
+}
+}
+
