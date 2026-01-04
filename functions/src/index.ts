@@ -6,6 +6,7 @@
 
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import { calculateRateLimitWindowKey, calculateExpiresAt } from './attentionHelpers';
 
 admin.initializeApp();
 
@@ -19,7 +20,13 @@ type AuditAction =
   | 'FAMILY_POLICY_UPDATED'
   | 'TASK_COMPLETION_APPROVED'
   | 'TASK_COMPLETION_REJECTED'
-  | 'ALLOWANCE_LEDGER_ENTRY_CREATED';
+  | 'ALLOWANCE_LEDGER_ENTRY_CREATED'
+  | 'PUSH_TEST_SENT'
+  | 'ATTENTION_SENT'
+  | 'ATTENTION_ACK'
+  | 'ATTENTION_CANCELLED'
+  | 'ATTENTION_MODE_UPDATED'
+  | 'ATTENTION_MODE_FORCED_ON';
 
 /**
  * Create an audit log entry (append-only)
@@ -611,5 +618,82 @@ export const addAllowanceLedgerEntry = functions.https.onCall(async (data, conte
   });
 
   return { success: true, entryId: ledgerRef.id };
+});
+
+/**
+ * TEMPORAL: Send test push notification to self
+ * TODO: Remove in hardening phase
+ */
+export const sendTestPushToSelf = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes estar autenticado');
+  }
+
+  const actorUid = context.auth.uid;
+
+  // Get user's device token
+  const userDoc = await db.collection('users').doc(actorUid).get();
+  if (!userDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'Usuario no encontrado');
+  }
+
+  const userData = userDoc.data()!;
+  const deviceTokens = userData.deviceTokens || {};
+
+  // Get token for current platform (simplified: try both)
+  const token = deviceTokens.ios?.token || deviceTokens.android?.token;
+  if (!token) {
+    throw new functions.https.HttpsError('failed-precondition', 'No se encontró token de dispositivo');
+  }
+
+  // Send push notification via Expo Push Notification API
+  try {
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+      },
+      body: JSON.stringify({
+        to: token,
+        sound: 'default',
+        title: 'Test Push',
+        body: 'Esta es una notificación de prueba',
+        data: { type: 'TEST' },
+        priority: 'high',
+        channelId: 'attention_high', // Android channel
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`Expo API error: ${response.status} - ${errorData}`);
+    }
+
+    const result = await response.json();
+    
+    // Check if push was sent successfully
+    if (result.data?.status === 'error') {
+      throw new functions.https.HttpsError(
+        'internal',
+        result.data.message || 'Error al enviar notificación'
+      );
+    }
+
+    // Optional: Create audit log
+    await createAuditLog('', 'PUSH_TEST_SENT', actorUid, {
+      tokenUsed: token.substring(0, 10) + '...',
+      platform: deviceTokens.ios ? 'ios' : 'android',
+    });
+
+    return { success: true, receiptId: result.data?.id };
+  } catch (error: any) {
+    console.error('Error sending test push:', error);
+    throw new functions.https.HttpsError(
+      'internal',
+      error.message || 'Error al enviar notificación de prueba'
+    );
+  }
 });
 

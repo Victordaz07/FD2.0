@@ -95,6 +95,7 @@ service cloud.firestore {
           request.resource.data.createdBy == request.auth.uid;
         
         // Members can update their own profile (limited fields), PARENT can update anyone
+        // NOTE: attentionMode.forcedUntil should only be updated via Functions
         allow update: if isOwner(memberId) || isParent(familyId);
         
         // Only PARENT can delete members
@@ -106,20 +107,19 @@ service cloud.firestore {
       // ============================================
       
       match /attention_requests/{requestId} {
-        // Members can read requests in their family
-        allow read: if isMember(familyId);
+        // PARENT/CO_PARENT can read all requests, targetUid can read their own
+        allow read: if isMember(familyId) &&
+          (isParent(familyId) || resource.data.targetUid == request.auth.uid);
         
-        // Only PARENT/CO_PARENT can create attention requests
-        allow create: if isParent(familyId) &&
-          request.resource.data.triggeredByUid == request.auth.uid;
+        // NO creates from clients (only Functions can create)
+        allow create: if false;
         
-        // Target user can update (acknowledge), PARENT can update/cancel
-        allow update: if isMember(familyId) &&
-          (request.resource.data.targetUid == request.auth.uid || isParent(familyId));
+        // NO updates from clients (only Functions can update)
+        allow update: if false;
         
-      // Only PARENT can delete
-      allow delete: if isParentOnly(familyId);
-    }
+        // NO deletes from clients (only Functions can delete)
+        allow delete: if false;
+      }
     
     // ============================================
     // TASKS SUBCOLLECTION

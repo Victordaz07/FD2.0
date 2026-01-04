@@ -45,8 +45,11 @@ export async function getMember(
     isMinor: data.isMinor,
     attentionMode: data.attentionMode
       ? {
-          ...data.attentionMode,
-          lastUpdatedAt: data.attentionMode.lastUpdatedAt?.toDate() || new Date(),
+          enabled: data.attentionMode.enabled,
+          allowLoud: data.attentionMode.allowLoud,
+          forcedUntil: data.attentionMode.forcedUntil ? data.attentionMode.forcedUntil.toDate() : undefined,
+          updatedAt: data.attentionMode.updatedAt.toDate(),
+          updatedByUid: data.attentionMode.updatedByUid,
         }
       : undefined,
     transition: data.transition
@@ -82,8 +85,11 @@ export async function getFamilyMembers(
       isMinor: data.isMinor,
       attentionMode: data.attentionMode
         ? {
-            ...data.attentionMode,
-            lastUpdatedAt: data.attentionMode.lastUpdatedAt?.toDate() || new Date(),
+            enabled: data.attentionMode.enabled,
+            allowLoud: data.attentionMode.allowLoud,
+            forcedUntil: data.attentionMode.forcedUntil ? data.attentionMode.forcedUntil.toDate() : undefined,
+            updatedAt: data.attentionMode.updatedAt.toDate(),
+            updatedByUid: data.attentionMode.updatedByUid,
           }
         : undefined,
       transition: data.transition

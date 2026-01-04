@@ -10,4 +10,6 @@ export * from './tasks';
 export * from './taskCompletions';
 export * from './allowanceLedger';
 export * from './events';
+export * from './attentionRequests';
+export * from './attentionMode';
 
