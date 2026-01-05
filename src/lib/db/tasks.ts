@@ -156,13 +156,13 @@ export async function getTask(familyId: string, taskId: string): Promise<Task | 
     familyId,
     title: data.title,
     description: data.description,
-    // Force boolean conversion - GUARANTEED to be boolean, never string
-    isActive: Boolean(normalizedIsActive),
+    // Force boolean conversion - Firestore may have stored strings
+    isActive: normalizedIsActive,
     schedule: data.schedule || undefined,
     points: data.points,
     amountCents: data.amountCents,
-    // Force boolean conversion - GUARANTEED to be boolean, never string
-    requiresApproval: Boolean(normalizedRequiresApproval),
+    // Force boolean conversion - Firestore may have stored strings
+    requiresApproval: normalizedRequiresApproval,
     createdBy: data.createdBy,
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
@@ -186,13 +186,13 @@ export async function listActiveTasks(familyId: string): Promise<Task[]> {
       familyId,
       title: data.title,
       description: data.description,
-      // Force boolean conversion - GUARANTEED to be boolean, never string
-      isActive: Boolean(toBool(data.isActive, false)),
+      // Force boolean conversion - Firestore may have stored strings
+      isActive: toBool(data.isActive),
       schedule: data.schedule || undefined,
       points: data.points,
       amountCents: data.amountCents,
-      // Force boolean conversion - GUARANTEED to be boolean, never string
-      requiresApproval: Boolean(toBool(data.requiresApproval, false)),
+      // Force boolean conversion - Firestore may have stored strings
+      requiresApproval: toBool(data.requiresApproval),
       createdBy: data.createdBy,
       createdAt: data.createdAt as Timestamp,
       updatedAt: data.updatedAt as Timestamp,
@@ -215,13 +215,13 @@ export async function listAllTasks(familyId: string): Promise<Task[]> {
       familyId,
       title: data.title,
       description: data.description,
-      // Force boolean conversion - GUARANTEED to be boolean, never string
-      isActive: Boolean(toBool(data.isActive, false)),
+      // Force boolean conversion - Firestore may have stored strings
+      isActive: toBool(data.isActive),
       schedule: data.schedule || undefined,
       points: data.points,
       amountCents: data.amountCents,
-      // Force boolean conversion - GUARANTEED to be boolean, never string
-      requiresApproval: Boolean(toBool(data.requiresApproval, false)),
+      // Force boolean conversion - Firestore may have stored strings
+      requiresApproval: toBool(data.requiresApproval),
       createdBy: data.createdBy,
       createdAt: data.createdAt as Timestamp,
       updatedAt: data.updatedAt as Timestamp,

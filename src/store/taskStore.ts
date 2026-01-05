@@ -22,15 +22,7 @@ export const useTaskStore = create<TaskState>((set) => ({
   loading: false,
   error: null,
   setTasks: (tasks) => {
-    // Normalize boolean values to ensure they are ALWAYS boolean
-    // This is a safety layer to prevent String values from reaching native components
-    const normalizedTasks = tasks.map((task) => ({
-      ...task,
-      // Force boolean conversion - double safety layer
-      isActive: Boolean(toBool(task.isActive, false)),
-      requiresApproval: Boolean(toBool(task.requiresApproval, false)),
-    }));
-    set({ tasks: normalizedTasks });
+    set({ tasks });
   },
   setCompletions: (completions) => set({ completions }),
   setPendingApprovals: (pendingApprovals) => set({ pendingApprovals }),

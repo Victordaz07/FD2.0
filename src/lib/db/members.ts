@@ -44,8 +44,8 @@ export async function getMember(
     displayName: data.displayName || undefined,
     birthYear: data.birthYear,
     ageGroup: data.ageGroup,
-    // Force boolean conversion - GUARANTEED to be boolean, never string
-    isMinor: Boolean(toBool(data.isMinor, false)),
+    // Force boolean conversion - Firestore may have stored strings
+    isMinor: toBool(data.isMinor),
     // TEMPORARILY DISABLED - Remove attentionMode to prevent crashes
     // TODO: Re-enable once boolean casting issues are resolved
     attentionMode: undefined,
