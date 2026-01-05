@@ -8,9 +8,9 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
+import { SafeSwitch } from '@/components/SafeSwitch';
 import { useAuthStore } from '@/store/authStore';
 import { useFamilyStore } from '@/store/familyStore';
 import { createTask } from '@/lib/db/tasks';
@@ -119,11 +119,17 @@ export default function NewTaskScreen() {
       <View style={styles.formGroup}>
         <View style={styles.switchContainer}>
           <Text style={styles.label}>Requiere aprobación</Text>
-          <Switch
+          <SafeSwitch
             value={requiresApproval}
             onValueChange={setRequiresApproval}
             disabled={loading}
           />
+          {/* #region agent log */}
+          {(() => {
+            fetch('http://127.0.0.1:7243/ingest/3b8b70a3-1fde-47ca-9ff3-e066d785c292',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'new.tsx:122',message:'Switch requiresApproval - prop value check',data:{requiresApprovalType:typeof requiresApproval,requiresApprovalValue:requiresApproval},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            return null;
+          })()}
+          {/* #endregion */}
         </View>
       </View>
 

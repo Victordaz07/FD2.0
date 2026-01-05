@@ -140,3 +140,4 @@
 **Fecha**: 2026-01-04
 **Listo para**: FASE 2 (Tasks, Allowance, Calendar)
 
+

@@ -33,3 +33,28 @@ export function calculateExpiresAt(durationSec: 15 | 30 | 60): admin.firestore.T
   return admin.firestore.Timestamp.fromMillis(expiresAtSeconds * 1000);
 }
 
+/**
+ * Safely converts various types to boolean, handling strings "true"/"false" correctly
+ * This is the backend version of the client-side toBool helper
+ * 
+ * @param v - Value to convert (can be boolean, string, number, null, undefined)
+ * @param fallback - Default value if conversion is not possible (default: false)
+ * @returns boolean
+ */
+export function toBool(v: unknown, fallback = false): boolean {
+  if (typeof v === 'boolean') return v;
+
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === '1') return true;
+    if (s === 'false' || s === '0' || s === '') return false;
+    return fallback;
+  }
+
+  if (typeof v === 'number') {
+    return v === 1 ? true : v === 0 ? false : fallback;
+  }
+
+  return fallback;
+}
+

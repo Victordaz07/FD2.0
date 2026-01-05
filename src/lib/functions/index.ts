@@ -4,4 +4,5 @@
 
 export * from './memberFunctions';
 export * from './taskFunctions';
+export * from './attentionFunctions';
 

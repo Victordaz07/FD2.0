@@ -18,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import { firestore } from '../firebase/config';
 import { Task, TaskSchedule } from '../types';
+import { toBool } from '../helpers/booleanHelpers';
 
 const COLLECTION = (familyId: string) => `families/${familyId}/tasks`;
 
@@ -43,7 +44,7 @@ export async function createTask(
   }
 
   const docRef = doc(collection(firestore, COLLECTION(familyId)));
-  
+
   await setDoc(docRef, {
     familyId,
     title: data.title,
@@ -52,7 +53,8 @@ export async function createTask(
     schedule: data.schedule || null,
     points: data.points || null,
     amountCents: data.amountCents || null,
-    requiresApproval: data.requiresApproval,
+    // Force boolean - never store strings (handles string "false" correctly)
+    requiresApproval: toBool(data.requiresApproval),
     createdBy: data.createdBy,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -92,8 +94,8 @@ export async function updateTask(
   }
 
   const docRef = doc(firestore, COLLECTION(familyId), taskId);
-  
-  const updateData: Record<string, unknown> = {
+
+  const updateData: Record<string, any> = {
     updatedAt: serverTimestamp(),
   };
 
@@ -102,7 +104,10 @@ export async function updateTask(
   if (updates.schedule !== undefined) updateData.schedule = updates.schedule || null;
   if (updates.points !== undefined) updateData.points = updates.points || null;
   if (updates.amountCents !== undefined) updateData.amountCents = updates.amountCents || null;
-  if (updates.requiresApproval !== undefined) updateData.requiresApproval = updates.requiresApproval;
+  if (updates.requiresApproval !== undefined) {
+    // Force boolean - never store strings (handles string "false" correctly)
+    updateData.requiresApproval = toBool(updates.requiresApproval);
+  }
 
   await updateDoc(docRef, updateData);
 }
@@ -118,7 +123,8 @@ export async function setTaskActive(
 ): Promise<void> {
   const docRef = doc(firestore, COLLECTION(familyId), taskId);
   await updateDoc(docRef, {
-    isActive,
+    // Force boolean - never store strings (handles string "false" correctly)
+    isActive: toBool(isActive),
     updatedAt: serverTimestamp(),
   });
 }
@@ -135,16 +141,28 @@ export async function getTask(familyId: string, taskId: string): Promise<Task | 
   }
 
   const data = docSnap.data();
+  // #region agent log
+  const rawIsActive = data.isActive;
+  const rawRequiresApproval = data.requiresApproval;
+  fetch('http://127.0.0.1:7243/ingest/3b8b70a3-1fde-47ca-9ff3-e066d785c292', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'tasks.ts:143', message: 'getTask - raw Firestore data', data: { taskId: docSnap.id, rawIsActiveType: typeof rawIsActive, rawIsActiveValue: rawIsActive, rawRequiresApprovalType: typeof rawRequiresApproval, rawRequiresApprovalValue: rawRequiresApproval }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) }).catch(() => { });
+  // #endregion
+  const normalizedIsActive = toBool(data.isActive);
+  const normalizedRequiresApproval = toBool(data.requiresApproval);
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/3b8b70a3-1fde-47ca-9ff3-e066d785c292', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'tasks.ts:150', message: 'getTask - after toBool normalization', data: { taskId: docSnap.id, normalizedIsActiveType: typeof normalizedIsActive, normalizedIsActiveValue: normalizedIsActive, normalizedRequiresApprovalType: typeof normalizedRequiresApproval, normalizedRequiresApprovalValue: normalizedRequiresApproval }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) }).catch(() => { });
+  // #endregion
   return {
     id: docSnap.id,
     familyId,
     title: data.title,
     description: data.description,
-    isActive: data.isActive,
+    // Force boolean conversion - GUARANTEED to be boolean, never string
+    isActive: Boolean(normalizedIsActive),
     schedule: data.schedule || undefined,
     points: data.points,
     amountCents: data.amountCents,
-    requiresApproval: data.requiresApproval,
+    // Force boolean conversion - GUARANTEED to be boolean, never string
+    requiresApproval: Boolean(normalizedRequiresApproval),
     createdBy: data.createdBy,
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
@@ -168,11 +186,13 @@ export async function listActiveTasks(familyId: string): Promise<Task[]> {
       familyId,
       title: data.title,
       description: data.description,
-      isActive: data.isActive,
+      // Force boolean conversion - GUARANTEED to be boolean, never string
+      isActive: Boolean(toBool(data.isActive, false)),
       schedule: data.schedule || undefined,
       points: data.points,
       amountCents: data.amountCents,
-      requiresApproval: data.requiresApproval,
+      // Force boolean conversion - GUARANTEED to be boolean, never string
+      requiresApproval: Boolean(toBool(data.requiresApproval, false)),
       createdBy: data.createdBy,
       createdAt: data.createdAt as Timestamp,
       updatedAt: data.updatedAt as Timestamp,
@@ -195,11 +215,13 @@ export async function listAllTasks(familyId: string): Promise<Task[]> {
       familyId,
       title: data.title,
       description: data.description,
-      isActive: data.isActive,
+      // Force boolean conversion - GUARANTEED to be boolean, never string
+      isActive: Boolean(toBool(data.isActive, false)),
       schedule: data.schedule || undefined,
       points: data.points,
       amountCents: data.amountCents,
-      requiresApproval: data.requiresApproval,
+      // Force boolean conversion - GUARANTEED to be boolean, never string
+      requiresApproval: Boolean(toBool(data.requiresApproval, false)),
       createdBy: data.createdBy,
       createdAt: data.createdAt as Timestamp,
       updatedAt: data.updatedAt as Timestamp,

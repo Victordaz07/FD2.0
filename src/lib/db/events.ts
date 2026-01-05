@@ -20,6 +20,7 @@ import {
   QueryDocumentSnapshot,
   DocumentData,
   Timestamp,
+  UpdateData,
 } from 'firebase/firestore';
 import { firestore } from '../firebase/config';
 import { CalendarEvent } from '../types';
@@ -46,7 +47,7 @@ export async function createEvent(
   }
 ): Promise<string> {
   const docRef = doc(collection(firestore, COLLECTION(familyId)));
-  
+
   await setDoc(docRef, {
     familyId,
     title: data.title,
@@ -80,8 +81,8 @@ export async function updateEvent(
   }
 ): Promise<void> {
   const docRef = doc(firestore, COLLECTION(familyId), eventId);
-  
-  const updateData: Record<string, unknown> = {
+
+  const updateData: UpdateData<DocumentData> = {
     updatedAt: serverTimestamp(),
   };
 

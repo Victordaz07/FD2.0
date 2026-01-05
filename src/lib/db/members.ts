@@ -17,6 +17,7 @@ import {
 import { firestore } from '../firebase/config';
 import { FamilyMember, Role } from '../types';
 import { computeAgeGroup } from '../policy/agePolicy';
+import { toBool } from '../helpers/booleanHelpers';
 import { getFamily } from './families';
 
 const COLLECTION = (familyId: string) => `families/${familyId}/members`;
@@ -40,24 +41,33 @@ export async function getMember(
     uid: docSnap.id,
     familyId,
     role: data.role,
+    displayName: data.displayName || undefined,
     birthYear: data.birthYear,
     ageGroup: data.ageGroup,
-    isMinor: data.isMinor,
+    // Force boolean conversion - GUARANTEED to be boolean, never string
+    isMinor: Boolean(toBool(data.isMinor, false)),
+    // TEMPORARILY DISABLED - Remove attentionMode to prevent crashes
+    // TODO: Re-enable once boolean casting issues are resolved
+    attentionMode: undefined,
+    /* ORIGINAL CODE - COMMENTED OUT TEMPORARILY
     attentionMode: data.attentionMode
       ? {
-          enabled: data.attentionMode.enabled,
-          allowLoud: data.attentionMode.allowLoud,
-          forcedUntil: data.attentionMode.forcedUntil ? data.attentionMode.forcedUntil.toDate() : undefined,
-          updatedAt: data.attentionMode.updatedAt.toDate(),
-          updatedByUid: data.attentionMode.updatedByUid,
-        }
+        // Force boolean conversion - Firestore may have stored strings
+        // Double conversion ensures we NEVER pass non-boolean to components
+        enabled: Boolean(toBool(data.attentionMode.enabled, false)),
+        allowLoud: Boolean(toBool(data.attentionMode.allowLoud, false)),
+        forcedUntil: data.attentionMode.forcedUntil ? data.attentionMode.forcedUntil.toDate() : undefined,
+        updatedAt: data.attentionMode.updatedAt.toDate(),
+        updatedByUid: data.attentionMode.updatedByUid,
+      }
       : undefined,
+    */
     transition: data.transition
       ? {
-          ...data.transition,
-          eligibleAt: data.transition.eligibleAt?.toDate(),
-          promotedAt: data.transition.promotedAt?.toDate(),
-        }
+        ...data.transition,
+        eligibleAt: data.transition.eligibleAt?.toDate(),
+        promotedAt: data.transition.promotedAt?.toDate(),
+      }
       : undefined,
     createdAt: data.createdAt?.toDate() || new Date(),
     updatedAt: data.updatedAt?.toDate() || new Date(),
@@ -76,28 +86,42 @@ export async function getFamilyMembers(
 
   return querySnapshot.docs.map((doc) => {
     const data = doc.data();
+    // #region agent log
+    const rawEnabled = data.attentionMode?.enabled;
+    const rawAllowLoud = data.attentionMode?.allowLoud;
+    fetch('http://127.0.0.1:7243/ingest/3b8b70a3-1fde-47ca-9ff3-e066d785c292', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'members.ts:82', message: 'getFamilyMembers - raw Firestore data', data: { uid: doc.id, rawEnabledType: typeof rawEnabled, rawEnabledValue: rawEnabled, rawAllowLoudType: typeof rawAllowLoud, rawAllowLoudValue: rawAllowLoud }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) }).catch(() => { });
+    // #endregion
     return {
       uid: doc.id,
       familyId,
       role: data.role,
+      displayName: data.displayName || undefined,
       birthYear: data.birthYear,
       ageGroup: data.ageGroup,
-      isMinor: data.isMinor,
+      // Force boolean conversion - Firestore may have stored strings
+      isMinor: toBool(data.isMinor),
+      // TEMPORARILY DISABLED - Remove attentionMode to prevent crashes
+      // TODO: Re-enable once boolean casting issues are resolved
+      attentionMode: undefined,
+      /* ORIGINAL CODE - COMMENTED OUT TEMPORARILY
       attentionMode: data.attentionMode
         ? {
-            enabled: data.attentionMode.enabled,
-            allowLoud: data.attentionMode.allowLoud,
-            forcedUntil: data.attentionMode.forcedUntil ? data.attentionMode.forcedUntil.toDate() : undefined,
-            updatedAt: data.attentionMode.updatedAt.toDate(),
-            updatedByUid: data.attentionMode.updatedByUid,
-          }
+          // Force boolean conversion - Firestore may have stored strings
+          // Double conversion ensures we NEVER pass non-boolean to components
+          enabled: Boolean(toBool(data.attentionMode.enabled, false)),
+          allowLoud: Boolean(toBool(data.attentionMode.allowLoud, false)),
+          forcedUntil: data.attentionMode.forcedUntil ? data.attentionMode.forcedUntil.toDate() : undefined,
+          updatedAt: data.attentionMode.updatedAt.toDate(),
+          updatedByUid: data.attentionMode.updatedByUid,
+        }
         : undefined,
+      */
       transition: data.transition
         ? {
-            ...data.transition,
-            eligibleAt: data.transition.eligibleAt?.toDate(),
-            promotedAt: data.transition.promotedAt?.toDate(),
-          }
+          ...data.transition,
+          eligibleAt: data.transition.eligibleAt?.toDate(),
+          promotedAt: data.transition.promotedAt?.toDate(),
+        }
         : undefined,
       createdAt: data.createdAt?.toDate() || new Date(),
       updatedAt: data.updatedAt?.toDate() || new Date(),
@@ -114,6 +138,7 @@ export async function addMember(data: {
   uid: string;
   role: Role;
   createdBy: string;
+  displayName?: string;
   birthYear?: number;
 }): Promise<void> {
   const family = await getFamily(data.familyId);
@@ -128,6 +153,7 @@ export async function addMember(data: {
   const docRef = doc(firestore, COLLECTION(data.familyId), data.uid);
   await setDoc(docRef, {
     role: data.role,
+    displayName: data.displayName || null,
     birthYear: data.birthYear || null,
     ageGroup: ageGroup || null,
     isMinor: isMinor,

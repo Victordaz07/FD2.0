@@ -69,6 +69,7 @@ export interface FamilyMember {
   uid: string;
   familyId: string;
   role: Role;
+  displayName?: string; // Family context display name (not from users)
   birthYear?: number;
   ageGroup?: AgeGroup; // DERIVED, not editable
   isMinor?: boolean; // DERIVED, not editable

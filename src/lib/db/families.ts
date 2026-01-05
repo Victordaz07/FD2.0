@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { firestore } from '../firebase/config';
 import { Family, FamilyPolicy } from '../types';
+import { toBool } from '../helpers/booleanHelpers';
 
 const COLLECTION = 'families';
 
@@ -38,11 +39,19 @@ export async function getFamily(familyId: string): Promise<Family | null> {
   }
 
   const data = docSnap.data();
+  const policy = data.familyPolicy || {};
   return {
     id: docSnap.id,
     name: data.name,
     inviteCode: data.inviteCode,
-    familyPolicy: data.familyPolicy,
+    familyPolicy: {
+      teenAge: policy.teenAge || 13,
+      adultAge: policy.adultAge || 18,
+      // Force boolean conversion - Firestore may have stored strings
+      allowManualPromotion: toBool(policy.allowManualPromotion, true),
+      allowTeenRole: toBool(policy.allowTeenRole, true),
+      calendarCreateRoles: policy.calendarCreateRoles,
+    },
     createdAt: data.createdAt?.toDate() || new Date(),
     updatedAt: data.updatedAt?.toDate() || new Date(),
     createdBy: data.createdBy,
@@ -67,11 +76,19 @@ export async function getFamilyByInviteCode(
 
   const doc = querySnapshot.docs[0];
   const data = doc.data();
+  const policy = data.familyPolicy || {};
   return {
     id: doc.id,
     name: data.name,
     inviteCode: data.inviteCode,
-    familyPolicy: data.familyPolicy,
+    familyPolicy: {
+      teenAge: policy.teenAge || 13,
+      adultAge: policy.adultAge || 18,
+      // Force boolean conversion - Firestore may have stored strings
+      allowManualPromotion: toBool(policy.allowManualPromotion, true),
+      allowTeenRole: toBool(policy.allowTeenRole, true),
+      calendarCreateRoles: policy.calendarCreateRoles,
+    },
     createdAt: data.createdAt?.toDate() || new Date(),
     updatedAt: data.updatedAt?.toDate() || new Date(),
     createdBy: data.createdBy,
@@ -118,9 +135,28 @@ export async function updateFamilyPolicy(
   policy: Partial<FamilyPolicy>
 ): Promise<void> {
   const docRef = doc(firestore, COLLECTION, familyId);
-  await updateDoc(docRef, {
-    'familyPolicy': policy,
+  const updateData: any = {
     updatedAt: serverTimestamp(),
-  });
+  };
+
+  // Build familyPolicy object with forced boolean conversion
+  const policyUpdate: any = {};
+  if (policy.teenAge !== undefined) policyUpdate.teenAge = policy.teenAge;
+  if (policy.adultAge !== undefined) policyUpdate.adultAge = policy.adultAge;
+  if (policy.allowManualPromotion !== undefined) {
+    // Force boolean - never store strings (handles string "false" correctly)
+    policyUpdate.allowManualPromotion = toBool(policy.allowManualPromotion);
+  }
+  if (policy.allowTeenRole !== undefined) {
+    // Force boolean - never store strings (handles string "false" correctly)
+    policyUpdate.allowTeenRole = toBool(policy.allowTeenRole);
+  }
+  if (policy.calendarCreateRoles !== undefined) {
+    policyUpdate.calendarCreateRoles = policy.calendarCreateRoles;
+  }
+
+  updateData['familyPolicy'] = policyUpdate;
+
+  await updateDoc(docRef, updateData);
 }
 

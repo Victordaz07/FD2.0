@@ -6,7 +6,7 @@
 
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
-import { calculateRateLimitWindowKey, calculateExpiresAt } from './attentionHelpers';
+import { calculateExpiresAt, toBool } from './attentionHelpers';
 
 admin.initializeApp();
 
@@ -164,13 +164,11 @@ export const changeMemberRole = functions.https.onCall(
       }
     }
 
-    // Get family policy for validation
+    // Verify family exists
     const familyDoc = await db.collection('families').doc(familyId).get();
     if (!familyDoc.exists) {
       throw new functions.https.HttpsError('not-found', 'Family not found');
     }
-
-    const familyPolicy = familyDoc.data()?.familyPolicy;
 
     // Update member role
     const memberRef = db
@@ -279,7 +277,7 @@ export const updateFamilyPolicy = functions.https.onCall(
  * Calculate periodKey based on task schedule and completion date (server-side)
  */
 function calculatePeriodKeyServer(
-  schedule: { frequency: string; [key: string]: unknown } | undefined,
+  schedule: { frequency: string;[key: string]: unknown } | undefined,
   completedAt: admin.firestore.Timestamp
 ): string {
   if (!schedule || schedule.frequency === 'one_time') {
@@ -672,7 +670,7 @@ export const sendTestPushToSelf = functions.https.onCall(async (data, context) =
     }
 
     const result = await response.json();
-    
+
     // Check if push was sent successfully
     if (result.data?.status === 'error') {
       throw new functions.https.HttpsError(
@@ -695,5 +693,528 @@ export const sendTestPushToSelf = functions.https.onCall(async (data, context) =
       error.message || 'Error al enviar notificación de prueba'
     );
   }
+});
+
+// =========================
+// Attention Ring (PR1)
+// =========================
+
+/**
+ * Send attention request (callable function)
+ * Validates permissions, rate limit, attentionMode, sends push and creates audit log
+ */
+export const sendAttentionRequest = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes estar autenticado');
+  }
+
+  const { familyId, targetUid, intensity, durationSec, message } = data;
+
+  if (!familyId || !targetUid || !intensity || !durationSec) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Faltan campos requeridos: familyId, targetUid, intensity, durationSec'
+    );
+  }
+
+  if (!['normal', 'loud'].includes(intensity)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Intensity debe ser "normal" o "loud"');
+  }
+
+  if (![15, 30, 60].includes(durationSec)) {
+    throw new functions.https.HttpsError('invalid-argument', 'durationSec debe ser 15, 30 o 60');
+  }
+
+  const actorUid = context.auth.uid;
+
+  // Get actor's role
+  const actorRole = await getUserRoleInFamily(familyId, actorUid);
+  if (!actorRole) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'No eres miembro de esta familia'
+    );
+  }
+
+  // Validate permissions: Only PARENT or CO_PARENT can send attention requests
+  if (actorRole !== 'PARENT' && actorRole !== 'CO_PARENT') {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'Solo PARENT o CO_PARENT pueden enviar solicitudes de atención'
+    );
+  }
+
+  // Verify target is a member of the family
+  const targetMemberDoc = await db
+    .collection('families')
+    .doc(familyId)
+    .collection('members')
+    .doc(targetUid)
+    .get();
+
+  if (!targetMemberDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'El miembro objetivo no existe en la familia');
+  }
+
+  // Read target's attentionMode
+  const targetData = targetMemberDoc.data()!;
+  const attentionMode = targetData.attentionMode || { enabled: false, allowLoud: false };
+  const now = admin.firestore.Timestamp.now();
+  const forcedUntil = attentionMode.forcedUntil
+    ? (attentionMode.forcedUntil as admin.firestore.Timestamp)
+    : null;
+
+  // Determine effective enabled state (forcedUntil overrides enabled)
+  const isForced = forcedUntil && forcedUntil.toMillis() > now.toMillis();
+  const effectiveEnabled = isForced || attentionMode.enabled;
+
+  // Determine final intensity (apply downgrades)
+  let finalIntensity: 'normal' | 'loud' = intensity;
+  if (!effectiveEnabled && intensity === 'loud') {
+    // If attentionMode is disabled, downgrade loud to normal
+    finalIntensity = 'normal';
+  } else if (!attentionMode.allowLoud && intensity === 'loud' && !isForced) {
+    // If allowLoud is false and not forced, downgrade to normal
+    finalIntensity = 'normal';
+  }
+
+  // Rate limit: 3 requests per targetUid every 10 minutes
+  const nowMillis = now.toMillis();
+  const rateBucket = Math.floor(nowMillis / (10 * 60 * 1000)); // 10-minute bucket
+
+  // Query for recent requests in the same bucket (any status except expired/failed count)
+  const recentRequestsQuery = await db
+    .collection('families')
+    .doc(familyId)
+    .collection('attention_requests')
+    .where('targetUid', '==', targetUid)
+    .where('rateBucket', '==', rateBucket)
+    .get();
+
+  // Filter to count only active, acknowledged, or cancelled (exclude expired/failed)
+  const recentCount = recentRequestsQuery.docs.filter(
+    (doc) => !['expired', 'failed'].includes(doc.data().status)
+  ).length;
+
+  if (recentCount >= 3) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'Demasiadas solicitudes. Máximo 3 por cada 10 minutos por persona.'
+    );
+  }
+
+  // Calculate expiresAt
+  const expiresAt = calculateExpiresAt(durationSec);
+
+  // Create attention request document
+  const requestRef = db.collection('families').doc(familyId).collection('attention_requests').doc();
+  await requestRef.set({
+    id: requestRef.id,
+    familyId,
+    targetUid,
+    triggeredByUid: actorUid,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt,
+    intensity: finalIntensity,
+    durationSec,
+    message: message || null,
+    status: 'active',
+    rateBucket,
+  });
+
+  // Get target user's device tokens
+  const targetUserDoc = await db.collection('users').doc(targetUid).get();
+  if (!targetUserDoc.exists) {
+    // Mark request as failed
+    await requestRef.update({
+      status: 'failed',
+      failReason: 'Usuario no encontrado',
+    });
+    throw new functions.https.HttpsError('not-found', 'Usuario objetivo no encontrado');
+  }
+
+  const targetUserData = targetUserDoc.data()!;
+  const deviceTokens = targetUserData.deviceTokens || {};
+  const token = deviceTokens.ios?.token || deviceTokens.android?.token;
+
+  if (!token) {
+    // Mark request as failed
+    await requestRef.update({
+      status: 'failed',
+      failReason: 'No se encontró token de dispositivo',
+    });
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'El usuario objetivo no tiene token de dispositivo registrado'
+    );
+  }
+
+  // Send push notification via Expo Push Notification API
+  try {
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+      },
+      body: JSON.stringify({
+        to: token,
+        sound: 'default',
+        title: '🔔 Solicitud de Atención',
+        body: message || 'Alguien necesita tu atención',
+        data: {
+          type: 'ATTENTION_RING',
+          requestId: requestRef.id,
+          familyId,
+          intensity: finalIntensity,
+          durationSec,
+        },
+        priority: 'high',
+        channelId: 'attention_high', // Android channel
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      await requestRef.update({
+        status: 'failed',
+        failReason: `Error al enviar push: ${response.status}`,
+      });
+      throw new Error(`Expo API error: ${response.status} - ${errorData}`);
+    }
+
+    const result = await response.json();
+
+    if (result.data?.status === 'error') {
+      await requestRef.update({
+        status: 'failed',
+        failReason: result.data.message || 'Error al enviar notificación',
+      });
+      throw new functions.https.HttpsError(
+        'internal',
+        result.data.message || 'Error al enviar notificación'
+      );
+    }
+  } catch (error: any) {
+    console.error('Error sending attention push:', error);
+    await requestRef.update({
+      status: 'failed',
+      failReason: error.message || 'Error desconocido',
+    });
+    throw new functions.https.HttpsError(
+      'internal',
+      error.message || 'Error al enviar notificación de atención'
+    );
+  }
+
+  // Create audit log
+  await createAuditLog(familyId, 'ATTENTION_SENT', actorUid, {
+    targetUid,
+    requestId: requestRef.id,
+    intensity: finalIntensity,
+    durationSec,
+    message: message || null,
+  });
+
+  return { success: true, requestId: requestRef.id };
+});
+
+/**
+ * Acknowledge attention request (callable function)
+ * Only the target user can acknowledge their own requests
+ */
+export const ackAttentionRequest = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes estar autenticado');
+  }
+
+  const { familyId, requestId } = data;
+
+  if (!familyId || !requestId) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Faltan campos requeridos: familyId, requestId'
+    );
+  }
+
+  const actorUid = context.auth.uid;
+
+  // Get request
+  const requestRef = db
+    .collection('families')
+    .doc(familyId)
+    .collection('attention_requests')
+    .doc(requestId);
+  const requestDoc = await requestRef.get();
+
+  if (!requestDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'Solicitud no encontrada');
+  }
+
+  const requestData = requestDoc.data()!;
+
+  // Validate: Only the target user can acknowledge
+  if (requestData.targetUid !== actorUid) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'Solo el destinatario puede reconocer esta solicitud'
+    );
+  }
+
+  // Validate status - idempotent: if already acknowledged, return success
+  if (requestData.status === 'acknowledged') {
+    return { success: true, alreadyAcknowledged: true };
+  }
+
+  if (requestData.status !== 'active') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'La solicitud no está activa'
+    );
+  }
+
+  // Update request status
+  await requestRef.update({
+    status: 'acknowledged',
+    ackAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Create audit log
+  await createAuditLog(familyId, 'ATTENTION_ACK', actorUid, {
+    targetUid: requestData.targetUid,
+    requestId,
+    triggeredByUid: requestData.triggeredByUid,
+  });
+
+  return { success: true };
+});
+
+/**
+ * Cancel attention request (callable function)
+ * Only PARENT/CO_PARENT can cancel requests
+ */
+export const cancelAttentionRequest = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes estar autenticado');
+  }
+
+  const { familyId, requestId } = data;
+
+  if (!familyId || !requestId) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Faltan campos requeridos: familyId, requestId'
+    );
+  }
+
+  const actorUid = context.auth.uid;
+
+  // Get actor's role
+  const actorRole = await getUserRoleInFamily(familyId, actorUid);
+  if (!actorRole) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'No eres miembro de esta familia'
+    );
+  }
+
+  // Validate permissions: Only PARENT or CO_PARENT can cancel
+  if (actorRole !== 'PARENT' && actorRole !== 'CO_PARENT') {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'Solo PARENT o CO_PARENT pueden cancelar solicitudes'
+    );
+  }
+
+  // Get request
+  const requestRef = db
+    .collection('families')
+    .doc(familyId)
+    .collection('attention_requests')
+    .doc(requestId);
+  const requestDoc = await requestRef.get();
+
+  if (!requestDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'Solicitud no encontrada');
+  }
+
+  const requestData = requestDoc.data()!;
+
+  // Validate status - idempotent: if already cancelled, return success
+  if (requestData.status === 'cancelled') {
+    return { success: true, alreadyCancelled: true };
+  }
+
+  if (requestData.status !== 'active') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'La solicitud no está activa'
+    );
+  }
+
+  // Update request status
+  await requestRef.update({
+    status: 'cancelled',
+    cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Create audit log
+  await createAuditLog(familyId, 'ATTENTION_CANCELLED', actorUid, {
+    targetUid: requestData.targetUid,
+    requestId,
+    triggeredByUid: requestData.triggeredByUid,
+  });
+
+  return { success: true };
+});
+
+/**
+ * Set attention mode (callable function)
+ * Users can only update their own attentionMode
+ */
+export const setAttentionMode = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes estar autenticado');
+  }
+
+  const { familyId, enabled, allowLoud } = data;
+
+  if (!familyId || typeof enabled !== 'boolean') {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Faltan campos requeridos: familyId, enabled'
+    );
+  }
+
+  if (allowLoud !== undefined && typeof allowLoud !== 'boolean') {
+    throw new functions.https.HttpsError('invalid-argument', 'allowLoud debe ser boolean');
+  }
+
+  const actorUid = context.auth.uid;
+
+  // Verify membership
+  const memberDoc = await db
+    .collection('families')
+    .doc(familyId)
+    .collection('members')
+    .doc(actorUid)
+    .get();
+
+  if (!memberDoc.exists) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'No eres miembro de esta familia'
+    );
+  }
+
+  // Only self can update (members/{uid} document matches actorUid)
+  // This is already enforced by the fact that we're updating members/{actorUid}
+
+  // Optional: If enabled=false, don't allow allowLoud=true
+  const finalAllowLoud = allowLoud !== undefined ? allowLoud : (enabled ? true : false);
+  const finalAllowLoudValue = enabled ? finalAllowLoud : false;
+
+  // Force boolean conversion - defensive programming (handles string "false" correctly)
+  const enabledBoolean = toBool(enabled);
+  const allowLoudBoolean = toBool(finalAllowLoudValue);
+
+  // Update attentionMode
+  const memberRef = db.collection('families').doc(familyId).collection('members').doc(actorUid);
+  await memberRef.update({
+    'attentionMode.enabled': enabledBoolean,
+    'attentionMode.allowLoud': allowLoudBoolean,
+    'attentionMode.updatedAt': admin.firestore.FieldValue.serverTimestamp(),
+    'attentionMode.updatedByUid': actorUid,
+  });
+
+  // Create audit log
+  await createAuditLog(familyId, 'ATTENTION_MODE_UPDATED', actorUid, {
+    targetUid: actorUid,
+    enabled: enabledBoolean,
+    allowLoud: allowLoudBoolean,
+  });
+
+  return { success: true };
+});
+
+/**
+ * Force attention mode ON (callable function)
+ * Only PARENT/CO_PARENT can force attention mode on for a target user
+ */
+export const forceAttentionModeOn = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes estar autenticado');
+  }
+
+  const { familyId, targetUid, forcedMinutes } = data;
+
+  if (!familyId || !targetUid || !forcedMinutes) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Faltan campos requeridos: familyId, targetUid, forcedMinutes'
+    );
+  }
+
+  if (typeof forcedMinutes !== 'number' || forcedMinutes < 1 || forcedMinutes > 120) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'forcedMinutes debe ser un número entre 1 y 120'
+    );
+  }
+
+  const actorUid = context.auth.uid;
+
+  // Get actor's role
+  const actorRole = await getUserRoleInFamily(familyId, actorUid);
+  if (!actorRole) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'No eres miembro de esta familia'
+    );
+  }
+
+  // Validate permissions: Only PARENT or CO_PARENT can force
+  if (actorRole !== 'PARENT' && actorRole !== 'CO_PARENT') {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'Solo PARENT o CO_PARENT pueden forzar el modo de atención'
+    );
+  }
+
+  // Verify target is a member
+  const targetMemberDoc = await db
+    .collection('families')
+    .doc(familyId)
+    .collection('members')
+    .doc(targetUid)
+    .get();
+
+  if (!targetMemberDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'El miembro objetivo no existe en la familia');
+  }
+
+  // Calculate forcedUntil timestamp
+  const now = admin.firestore.Timestamp.now();
+  const forcedUntilSeconds = now.seconds + forcedMinutes * 60;
+  const forcedUntil = admin.firestore.Timestamp.fromMillis(forcedUntilSeconds * 1000);
+
+  // Update attentionMode: set enabled=true and forcedUntil
+  const memberRef = db.collection('families').doc(familyId).collection('members').doc(targetUid);
+  await memberRef.update({
+    'attentionMode.enabled': true,
+    'attentionMode.forcedUntil': forcedUntil,
+    'attentionMode.updatedAt': admin.firestore.FieldValue.serverTimestamp(),
+    'attentionMode.updatedByUid': actorUid,
+  });
+
+  // Create audit log
+  await createAuditLog(familyId, 'ATTENTION_MODE_FORCED_ON', actorUid, {
+    targetUid,
+    forcedMinutes,
+    forcedUntil: forcedUntil.toMillis(),
+  });
+
+  return { success: true, forcedUntil: forcedUntil.toMillis() };
 });
 

@@ -86,7 +86,7 @@ export async function listActiveRequestsForTarget(
       ackAt: data.ackAt ? (data.ackAt as Timestamp) : undefined,
       cancelledAt: data.cancelledAt ? (data.cancelledAt as Timestamp) : undefined,
       failReason: data.failReason || undefined,
-      rateKey: data.rateKey,
+      rateKey: data.rateKey || data.rateBucket?.toString() || '', // Backward compatibility
     };
   });
 }
@@ -163,7 +163,7 @@ export async function listAllRequests(
       ackAt: data.ackAt ? (data.ackAt as Timestamp) : undefined,
       cancelledAt: data.cancelledAt ? (data.cancelledAt as Timestamp) : undefined,
       failReason: data.failReason || undefined,
-      rateKey: data.rateKey,
+      rateKey: data.rateKey || data.rateBucket?.toString() || '', // Backward compatibility
     };
   });
 
