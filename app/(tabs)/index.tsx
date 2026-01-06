@@ -46,7 +46,7 @@ export default function HomeScreen() {
         <Text style={styles.sectionTitle}>Acciones Rápidas</Text>
         <TouchableOpacity
           style={styles.button}
-          onPress={() => router.push('/(admin)/members')}
+          onPress={() => router.push('/(admin)/manage-members')}
         >
           <Text style={styles.buttonText}>Gestionar Miembros</Text>
         </TouchableOpacity>
@@ -55,6 +55,12 @@ export default function HomeScreen() {
           onPress={() => router.push('/(admin)/settings')}
         >
           <Text style={styles.buttonText}>Configuración</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => router.push('/tasks-manage')}
+        >
+          <Text style={styles.buttonText}>Tareas v1 (beta)</Text>
         </TouchableOpacity>
       </View>
 
