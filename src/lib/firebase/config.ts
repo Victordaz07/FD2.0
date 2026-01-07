@@ -6,11 +6,10 @@
  */
 
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { initializeAuth, getAuth, getReactNativePersistence, Auth } from 'firebase/auth';
+import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getFunctions, Functions } from 'firebase/functions';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * Firebase configuration
@@ -26,32 +25,44 @@ const firebaseConfig = {
 };
 
 // --- DEBUG (remove later if you want) ---
-console.log("[Firebase] apiKey:", firebaseConfig.apiKey);
+console.log("[Firebase] Initializing...");
+console.log("[Firebase] apiKey:", firebaseConfig.apiKey ? "Present" : "MISSING!");
 console.log("[Firebase] projectId:", firebaseConfig.projectId);
+console.log("[Firebase] authDomain:", firebaseConfig.authDomain);
 // ---------------------------------------
+
+// Validate Firebase config
+if (!firebaseConfig.apiKey) {
+  console.error("[Firebase] ERROR: apiKey is missing! Firebase Auth will not work.");
+}
 
 /**
  * Initialize Firebase App (singleton-safe)
  */
-const app: FirebaseApp = getApps().length === 0
-  ? initializeApp(firebaseConfig)
-  : getApp();
+let app: FirebaseApp;
+try {
+  app = getApps().length === 0
+    ? initializeApp(firebaseConfig)
+    : getApp();
+  console.log("[Firebase] App initialized successfully");
+} catch (error) {
+  console.error("[Firebase] ERROR initializing app:", error);
+  throw error;
+}
 
 /**
- * Firebase Auth (React Native persistence)
+ * Firebase Auth
+ * Use getAuth which works on all platforms with default persistence
+ * Note: getReactNativePersistence may not be available in all Firebase versions,
+ * but getAuth works fine with default persistence on all platforms
  */
 let auth: Auth;
 try {
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
-} catch (error: any) {
-  // If auth is already initialized, get the existing instance
-  if (error.code === 'auth/already-initialized') {
-    auth = getAuth(app);
-  } else {
-    throw error;
-  }
+  auth = getAuth(app);
+  console.log("[Firebase] Auth initialized successfully");
+} catch (error) {
+  console.error("[Firebase] ERROR initializing auth:", error);
+  throw error;
 }
 
 /**

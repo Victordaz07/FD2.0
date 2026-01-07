@@ -13,12 +13,14 @@ import { signIn } from '@/lib/auth/authService';
 import { useAuthStore } from '@/store/authStore';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('viruizbc@gmail.com'); // Pre-filled for testing
+  const [password, setPassword] = useState(''); // User must enter password
   const [loading, setLoading] = useState(false);
   const setUser = useAuthStore((state) => state.setUser);
 
   const handleLogin = async () => {
+    console.log('[Login] handleLogin called', { email, hasPassword: !!password });
+    
     if (!email || !password) {
       Alert.alert('Error', 'Por favor completa todos los campos');
       return;
@@ -26,12 +28,37 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
+      console.log('[Login] Attempting sign in...');
       const user = await signIn(email, password);
+      console.log('[Login] Sign in successful', { uid: user.uid, email: user.email });
+      
       setUser(user);
+      console.log('[Login] User set in store, navigating...');
+      
       // Navigation will be handled by index.tsx based on auth state
       router.replace('/(tabs)');
     } catch (error: any) {
-      Alert.alert('Error de inicio de sesión', error.message || 'Error desconocido');
+      console.error('[Login] Sign in error:', error);
+      
+      // Handle specific Firebase errors
+      let errorMessage = 'Error desconocido';
+      if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No existe una cuenta con este email. ¿Quieres registrarte?';
+      } else if (error.code === 'auth/wrong-password') {
+        errorMessage = 'Contraseña incorrecta';
+      } else if (error.code === 'auth/invalid-credential') {
+        errorMessage = 'Email o contraseña incorrectos. Verifica tus credenciales o regístrate si no tienes cuenta.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'El email no es válido';
+      } else if (error.code === 'auth/user-disabled') {
+        errorMessage = 'Esta cuenta ha sido deshabilitada';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Demasiados intentos fallidos. Intenta más tarde';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Error de inicio de sesión', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -63,8 +90,12 @@ export default function LoginScreen() {
 
       <TouchableOpacity
         style={[styles.button, loading && styles.buttonDisabled]}
-        onPress={handleLogin}
+        onPress={() => {
+          console.log('[Login] Button pressed');
+          handleLogin();
+        }}
         disabled={loading}
+        activeOpacity={0.8}
       >
         {loading ? (
           <ActivityIndicator color="#fff" />

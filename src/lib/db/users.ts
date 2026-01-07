@@ -62,14 +62,40 @@ export async function createUser(userData: {
     email: string;
     displayName?: string;
 }): Promise<void> {
-    const docRef = doc(firestore, COLLECTION, userData.uid);
-    await setDoc(docRef, {
-        email: userData.email,
-        displayName: userData.displayName || null,
-        activeFamilyId: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-    });
+    console.log('[createUser] Creating user document', { uid: userData.uid, email: userData.email });
+    
+    try {
+        const docRef = doc(firestore, COLLECTION, userData.uid);
+        
+        const userDocData = {
+            email: userData.email,
+            displayName: userData.displayName || null,
+            activeFamilyId: null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+        };
+        
+        console.log('[createUser] Document data prepared', userDocData);
+        console.log('[createUser] Calling setDoc...');
+        
+        await setDoc(docRef, userDocData);
+        
+        console.log('[createUser] setDoc completed successfully');
+        
+        // Verify document was created
+        const verifyDoc = await getDoc(docRef);
+        if (verifyDoc.exists()) {
+            console.log('[createUser] Document verified - exists in Firestore');
+        } else {
+            console.error('[createUser] ERROR: Document was not created despite setDoc success');
+            throw new Error('Failed to create user document - verification failed');
+        }
+    } catch (error: any) {
+        console.error('[createUser] ERROR creating user document:', error);
+        console.error('[createUser] Error code:', error.code);
+        console.error('[createUser] Error message:', error.message);
+        throw error;
+    }
 }
 
 /**

@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { Stack } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { router } from "expo-router";
+import { Platform } from "react-native";
+import "../src/global.css";
 
 type NotificationSubscription = { remove: () => void };
 
@@ -13,7 +15,13 @@ export default function RootLayout() {
     let NotificationsModule: typeof import("expo-notifications") | null = null;
 
     // Lazy load notifications module to avoid errors in Expo Go
+    // Only initialize on native platforms (not web)
     const initNotifications = async () => {
+      // Skip notifications on web platform
+      if (Platform.OS === "web") {
+        return;
+      }
+
       try {
         NotificationsModule = await import("expo-notifications");
 

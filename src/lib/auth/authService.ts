@@ -22,27 +22,56 @@ export async function signUp(
   password: string,
   displayName?: string
 ): Promise<User> {
-  const userCredential = await createUserWithEmailAndPassword(
-    auth,
-    email,
-    password
-  );
-  const firebaseUser = userCredential.user;
+  console.log('[AuthService] signUp called', { email, displayName });
+  
+  try {
+    console.log('[AuthService] Calling Firebase createUserWithEmailAndPassword...');
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      email,
+      password
+    );
+    console.log('[AuthService] Firebase signUp successful', { uid: userCredential.user.uid });
+    
+    const firebaseUser = userCredential.user;
 
-  // Create user document in Firestore
-  await createUser({
-    uid: firebaseUser.uid,
-    email: firebaseUser.email!,
-    displayName,
-  });
+    // Wait a bit for auth state to propagate
+    console.log('[AuthService] Waiting for auth state to sync...');
+    await new Promise(resolve => setTimeout(resolve, 500));
 
-  // Return user object
-  const user = await getUser(firebaseUser.uid);
-  if (!user) {
-    throw new Error('Failed to create user document');
+    // Create user document in Firestore
+    console.log('[AuthService] Creating user document in Firestore...');
+    try {
+      await createUser({
+        uid: firebaseUser.uid,
+        email: firebaseUser.email!,
+        displayName,
+      });
+      console.log('[AuthService] User document created successfully');
+    } catch (createError: any) {
+      console.error('[AuthService] ERROR creating user document:', createError);
+      // If document creation fails, we should still allow the user to proceed
+      // but log the error. They can complete registration later.
+      if (createError.code === 'permission-denied') {
+        throw new Error('Error de permisos al crear el perfil. Intenta nuevamente.');
+      }
+      throw createError;
+    }
+
+    // Return user object
+    console.log('[AuthService] Getting user document from Firestore...');
+    const user = await getUser(firebaseUser.uid);
+    if (!user) {
+      console.error('[AuthService] Failed to retrieve user document after creation');
+      throw new Error('Failed to create user document');
+    }
+
+    console.log('[AuthService] User document retrieved', { uid: user.uid });
+    return user;
+  } catch (error: any) {
+    console.error('[AuthService] signUp error:', error);
+    throw error;
   }
-
-  return user;
 }
 
 /**
@@ -52,15 +81,28 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<User> {
-  const userCredential = await signInWithEmailAndPassword(auth, email, password);
-  const firebaseUser = userCredential.user;
+  console.log('[AuthService] signIn called', { email });
+  
+  try {
+    console.log('[AuthService] Calling Firebase signInWithEmailAndPassword...');
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    console.log('[AuthService] Firebase signIn successful', { uid: userCredential.user.uid });
+    
+    const firebaseUser = userCredential.user;
 
-  const user = await getUser(firebaseUser.uid);
-  if (!user) {
-    throw new Error('User document not found');
+    console.log('[AuthService] Getting user document from Firestore...');
+    const user = await getUser(firebaseUser.uid);
+    if (!user) {
+      console.error('[AuthService] User document not found');
+      throw new Error('User document not found');
+    }
+
+    console.log('[AuthService] User document retrieved', { uid: user.uid });
+    return user;
+  } catch (error: any) {
+    console.error('[AuthService] signIn error:', error);
+    throw error;
   }
-
-  return user;
 }
 
 /**

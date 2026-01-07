@@ -1,128 +1,243 @@
-import { useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { router } from 'expo-router';
+import React, { useEffect, useMemo } from 'react';
+import { View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
 import { useFamilyStore } from '@/store/familyStore';
 import { getFamily } from '@/lib/db/families';
 import { getFamilyMembers } from '@/lib/db/members';
+import { theme } from '@/theme/theme';
+import {
+  FDScreen,
+  FDText,
+  FDSection,
+  FDStatPill,
+  FDListItem,
+  FDCard,
+  FDButton,
+  FDBadge,
+} from '@/components/ui';
 
-export default function HomeScreen() {
+// Utilidades header (simple, estable)
+function formatDateLong(d: Date) {
+  try {
+    return d.toLocaleDateString('es-ES', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    });
+  } catch {
+    return d.toDateString();
+  }
+}
+
+function getGreeting(d: Date) {
+  const h = d.getHours();
+  if (h < 12) return 'Buenos días';
+  if (h < 18) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+export default function HomeTab() {
+  const router = useRouter();
   const { user } = useAuthStore();
-  const { currentFamily, setCurrentFamily, setMembers } = useFamilyStore();
+  const { currentFamily, setCurrentFamily, setMembers, members } = useFamilyStore();
 
+  // ----------------------------
+  // Mantener lógica existente
+  // ----------------------------
   useEffect(() => {
     if (user?.activeFamilyId) {
-      loadFamilyData();
+      void loadFamilyData();
     }
   }, [user?.activeFamilyId]);
 
   const loadFamilyData = async () => {
     if (!user?.activeFamilyId) return;
-
     try {
       const family = await getFamily(user.activeFamilyId);
       if (family) {
         setCurrentFamily(family);
       }
-
-      const members = await getFamilyMembers(user.activeFamilyId);
-      setMembers(members);
-    } catch (error) {
+      const membersData = await getFamilyMembers(user.activeFamilyId);
+      setMembers(membersData);
+    } catch (error: any) {
+      // Log error but don't break the UI
       console.error('Error loading family data:', error);
+      // If it's a permissions error, it might mean the user isn't a member yet
+      // The UI will still render with fallback data
+      if (error?.code === 'permission-denied') {
+        console.warn('Permission denied: User may not be a member of this family yet');
+      }
+    }
+  };
+
+  // ----------------------------
+  // Header dinámico
+  // ----------------------------
+  const now = useMemo(() => new Date(), []);
+  const greeting = useMemo(() => getGreeting(now), [now]);
+  const dateLabel = useMemo(() => formatDateLong(now), [now]);
+
+  // ----------------------------
+  // Stats: usar datos reales si existen; fallback a hardcode
+  // ----------------------------
+  const streakDays = currentFamily?.id ? 15 : 5; // TODO: conectar a Firestore cuando exista
+  const pendingTasks = 8; // TODO: calcular desde tasks reales
+  const upcomingEvents = 3; // TODO: calcular desde eventos próximos
+  const points = 4250; // TODO: conectar a Firestore cuando exista
+  const pointsLabel = new Intl.NumberFormat('es-US').format(points);
+
+  // ----------------------------
+  // Datos reales para actividad reciente
+  // ----------------------------
+  const firstMember = members?.[0];
+  const memberName = firstMember?.displayName ?? 'Un miembro';
+
+  // ----------------------------
+  // Navegaciones existentes (mantener) con try-catch defensivo
+  // ----------------------------
+  const goFamilyHub = () => {
+    try {
+      router.push('/(tabs)/familyhub');
+    } catch (e) {
+      console.error('Navigation error to familyhub:', e);
+    }
+  };
+  const goPlan = () => {
+    try {
+      router.push('/(tabs)/plan');
+    } catch (e) {
+      console.error('Navigation error to plan:', e);
+    }
+  };
+  const goLegacy = () => {
+    try {
+      router.push('/legacy-home');
+    } catch (e) {
+      console.error('Navigation error to legacy-home:', e);
     }
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>FamilyDash</Text>
-      {currentFamily && (
-        <View style={styles.familyCard}>
-          <Text style={styles.familyName}>{currentFamily.name}</Text>
-          <Text style={styles.familyCode}>Código: {currentFamily.inviteCode}</Text>
+    <FDScreen scroll>
+      {/* Header */}
+      <FDText variant="h1">
+        {greeting}, {user?.displayName ?? 'Familia'}
+      </FDText>
+      <FDText tone="secondary" style={{ textTransform: 'capitalize' }}>
+        {dateLabel}
+      </FDText>
+
+      <View style={{ height: theme.spacing.xl }} />
+
+      {/* Manejo de "sin familia" */}
+      {!user?.activeFamilyId ? (
+        <>
+          <FDCard
+            style={{
+              backgroundColor: theme.colors.warningLight,
+              borderColor: theme.colors.warningLight,
+            }}
+          >
+            <FDText variant="h2">⚠️ Falta tu familia</FDText>
+            <FDText tone="secondary">
+              Crea o selecciona una familia para ver tu dashboard.
+            </FDText>
+            <View style={{ height: theme.spacing.lg }} />
+            <FDButton label="Ir a FamilyHub" onPress={goFamilyHub} />
+          </FDCard>
+          <View style={{ height: theme.spacing['2xl'] }} />
+        </>
+      ) : null}
+
+      {/* Stats (2x2) */}
+      <FDSection title="Resumen de hoy" subtitle="Rápido, claro y sin ruido.">
+        <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+          <View style={{ flex: 1 }}>
+            <FDStatPill
+              label="Racha familiar"
+              value={`${streakDays} días`}
+              tone="success"
+              variant="solid"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <FDStatPill
+              label="Pendientes"
+              value={pendingTasks}
+              tone="warning"
+              variant="solid"
+            />
+          </View>
         </View>
-      )}
+        <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+          <View style={{ flex: 1 }}>
+            <FDStatPill
+              label="Próximos"
+              value={upcomingEvents}
+              tone="accent"
+              variant="solid"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <FDStatPill
+              label="Puntos"
+              value={pointsLabel}
+              tone="secondary"
+              variant="solid"
+            />
+          </View>
+        </View>
+      </FDSection>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Acciones Rápidas</Text>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.push('/(admin)/manage-members')}
-        >
-          <Text style={styles.buttonText}>Gestionar Miembros</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.push('/(admin)/settings')}
-        >
-          <Text style={styles.buttonText}>Configuración</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.push('/tasks-manage')}
-        >
-          <Text style={styles.buttonText}>Tareas v1 (beta)</Text>
-        </TouchableOpacity>
-      </View>
+      <View style={{ height: theme.spacing['2xl'] }} />
 
-      <Text style={styles.info}>
-        Bienvenido a FamilyDash 2.0. Más funciones próximamente.
-      </Text>
-    </ScrollView>
+      {/* Actividad reciente (3 items) */}
+      <FDSection title="Actividad reciente" actionLabel="Ver Plan" onActionPress={goPlan}>
+        <FDListItem
+          title={`${memberName} completó una tarea`}
+          subtitle="Reciente"
+          right={<FDBadge label="Hecho" tone="success" />}
+          onPress={goPlan}
+        />
+        <FDListItem
+          title={`${memberName}: Tarea pendiente`}
+          subtitle="Pendiente • vence hoy"
+          right={<FDBadge label="Hoy" tone="warning" />}
+          onPress={goPlan}
+        />
+        <FDListItem
+          title="Meta familiar: Lectura"
+          subtitle="Racha activa"
+          right={<FDBadge label="Racha" tone="primary" />}
+          onPress={goFamilyHub}
+        />
+      </FDSection>
+
+      <View style={{ height: theme.spacing['2xl'] }} />
+
+      {/* Banner motivacional */}
+      <FDCard
+        style={{
+          backgroundColor: theme.colors.primaryBg,
+          borderColor: theme.colors.primaryBg,
+        }}
+      >
+        <FDText variant="h2">🎉 Mantengan la racha</FDText>
+        <FDText tone="secondary">
+          Completen 1 tarea más hoy y cierran el día con victoria familiar.
+        </FDText>
+
+        <View style={{ height: theme.spacing.lg }} />
+        <FDButton label="Ir al Plan" onPress={goPlan} />
+        <View style={{ height: theme.spacing.sm }} />
+        <FDButton label="Abrir FamilyHub" variant="secondary" onPress={goFamilyHub} />
+        <View style={{ height: theme.spacing.sm }} />
+        {/* Botón opcional para comparar */}
+        <FDButton label="Ver Home viejo" variant="secondary" onPress={goLegacy} />
+      </FDCard>
+
+      <View style={{ height: theme.spacing['3xl'] }} />
+    </FDScreen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  content: {
-    padding: 20,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 24,
-  },
-  familyCard: {
-    backgroundColor: '#f5f5f5',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 24,
-  },
-  familyName: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  familyCode: {
-    fontSize: 14,
-    color: '#666',
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  button: {
-    backgroundColor: '#007AFF',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  info: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 24,
-  },
-});

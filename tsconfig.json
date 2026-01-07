@@ -4,6 +4,7 @@
     "strict": true,
     "baseUrl": ".",
     "module": "esnext",
+    "target": "esnext",
     "paths": {
       "@/*": [
         "./src/*"
@@ -12,6 +13,7 @@
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    "nativewind-env.d.ts"
   ]
 }
